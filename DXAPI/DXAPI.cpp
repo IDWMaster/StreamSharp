@@ -31,7 +31,7 @@ extern "C" {
 		//Mirror output to virtual display
 		IDXGIOutputDuplication* vmon;
 		graphicsOutput->DuplicateOutput(dev, &vmon);
-		vmon->AcquireNextFrame()
+		vmon->AcquireNextFrame() //TODO: For each frame; encode with help from this sample: https://msdn.microsoft.com/en-us/library/windows/desktop/ff819477(v=vs.85).aspx
 
 		//dev->CreateRenderTargetView()
 		return retval;
