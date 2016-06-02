@@ -151,6 +151,9 @@ extern "C" {
 		D3D_FEATURE_LEVEL featureLevel;
 		ID3D11DeviceContext* ctx;
 		bool retval = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, 0, 0, D3D11_SDK_VERSION, &dev, &featureLevel, &ctx) == S_OK;
+		HWND desktop = GetDesktopWindow();
+		RECT desktopSize;
+		GetWindowRect(desktop, &desktopSize);
 		//Get DXGI device (used for direct access to pixel buffers)
 		IDXGIDevice* dxdev;
 		dev->QueryInterface(&dxdev);
@@ -174,7 +177,7 @@ extern "C" {
 		//Create staging texture that we can copy active frame to (we can't lock the backbuffer from userspace)
 		ID3D11Texture2D* stagingTexture = 0;
 
-
+		
 		//TODO: Create byte stream
 		ByteStream* bs = new ByteStream();
 		IMFSinkWriter* outputstream;
@@ -187,9 +190,9 @@ extern "C" {
 		MFCreateMediaType(&mediaType);
 		mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
 		mediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-		mediaType->SetUINT32(MF_MT_AVG_BITRATE, 800000); //Bits per second
+		mediaType->SetUINT32(MF_MT_AVG_BITRATE, 16000000); //Bits per second
 		mediaType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-		MFSetAttributeSize(mediaType, MF_MT_FRAME_SIZE, 1920, 1080); //TODO: Dynamic based on screen size
+		MFSetAttributeSize(mediaType, MF_MT_FRAME_SIZE, desktopSize.right, desktopSize.bottom); //TODO: Dynamic based on screen size
 		MFSetAttributeRatio(mediaType, MF_MT_FRAME_RATE, 60, 1); //60 frames per second
 		MFSetAttributeRatio(mediaType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 		DWORD videoStream;
@@ -200,7 +203,7 @@ extern "C" {
 		mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
 		mediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32);
 		mediaType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-		MFSetAttributeSize(mediaType, MF_MT_FRAME_SIZE, 1920, 1080); //TODO: Dynamic based on screen size
+		MFSetAttributeSize(mediaType, MF_MT_FRAME_SIZE, desktopSize.right, desktopSize.bottom); //TODO: Dynamic based on screen size
 		MFSetAttributeRatio(mediaType, MF_MT_FRAME_RATE, 60, 1); //60 frames per second
 		MFSetAttributeRatio(mediaType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 		HRESULT inputStatus = outputstream->SetInputMediaType(videoStream, mediaType, 0);
@@ -243,8 +246,9 @@ extern "C" {
 			MFCreateSample(&sample);
 			
 			//Copy from GPU to CPU memory
+			HRESULT status = 0;
 			IMFMediaBuffer* cpubuffer = 0;
-			D3D11_MAPPED_SUBRESOURCE gpumem;
+			/*D3D11_MAPPED_SUBRESOURCE gpumem;
 			ctx->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &gpumem);
 			
 			MFCreateMemoryBuffer(gpumem.DepthPitch, &cpubuffer);
@@ -254,8 +258,21 @@ extern "C" {
 			cpubuffer->Unlock();
 			cpubuffer->SetCurrentLength(gpumem.DepthPitch);
 			ctx->Unmap(stagingTexture, 0);
-			HRESULT status = sample->AddBuffer(cpubuffer);
+			*/
+			//GPU direct
+			MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), stagingTexture, 0, false, &cpubuffer);
+			IMF2DBuffer* im2d = 0;
+			cpubuffer->QueryInterface(&im2d);
+			DWORD len = 0;
+			im2d->GetContiguousLength(&len);
+			im2d->Release();
+			im2d = 0;
+			cpubuffer->SetCurrentLength(len);
+			status = sample->AddBuffer(cpubuffer);
+			
 			cpubuffer->Release();
+
+
 			sample->SetSampleDuration(10 * 1000 * 1000 / 60); //1 frame
 			sample->SetSampleTime(0);
 			status = outputstream->WriteSample(0, sample);
