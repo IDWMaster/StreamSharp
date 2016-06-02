@@ -178,7 +178,7 @@ extern "C" {
 		MFCreateAttributes(&attribs, 1);
 		attribs->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4);
 		MFCreateSinkWriterFromURL(0, bs, attribs, &outputstream);
-
+		
 		while (true) {
 			DXGI_OUTDUPL_FRAME_INFO frameinfo;
 			IDXGIResource* frame = 0;
@@ -193,6 +193,20 @@ extern "C" {
 			BYTE* cpumem;
 			DXGI_MAPPED_RECT gpumem;
 			MFCreateMemoryBuffer(surfdesc.Width*surfdesc.Height * 4, &buffer);
+			D3D11_TEXTURE2D_DESC textureDescription;
+			textureDescription.Width = surfdesc.Width;
+			textureDescription.Height = surfdesc.Height;
+			textureDescription.MipLevels = 1;
+			textureDescription.ArraySize = 1;
+			textureDescription.Format = surfdesc.Format;
+			textureDescription.SampleDesc.Count = 1;
+			textureDescription.SampleDesc.Quality = 0;
+			textureDescription.BindFlags = 0;
+			textureDescription.CPUAccessFlags = D3D11_CPU_ACCESS_READ; //Allow DMA reads from CPU
+			textureDescription.MiscFlags = 0;
+			ID3D11Texture2D* sharedTexture;
+			dev->CreateTexture2D(&textureDescription, 0, &sharedTexture);
+			
 			buffer->Lock(&cpumem, 0, 0);
 			HRESULT status = vmon->MapDesktopSurface(&gpumem); //TODO: This function doesn't really work. We have to copy to a GPU texture with CPU read access enabled, then copy from that texture to CPU memory....
 
@@ -205,6 +219,7 @@ extern "C" {
 			buffer->Release();
 			sample->Release();
 			vmon->ReleaseFrame();
+			break; //TODO: Finish this
 		}
 		//TODO: For each frame; encode with help from this sample: https://msdn.microsoft.com/en-us/library/windows/desktop/ff819477(v=vs.85).aspx
 
