@@ -171,15 +171,48 @@ extern "C" {
 		IDXGIOutputDuplication* vmon;
 		graphicsOutput->DuplicateOutput(dev, &vmon);
 
+		//Create staging texture that we can copy active frame to (we can't lock the backbuffer from userspace)
+		ID3D11Texture2D* stagingTexture = 0;
+
+
 		//TODO: Create byte stream
 		ByteStream* bs = new ByteStream();
 		IMFSinkWriter* outputstream;
 		IMFAttributes* attribs = 0;
 		MFCreateAttributes(&attribs, 1);
 		attribs->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4);
-		MFCreateSinkWriterFromURL(0, bs, attribs, &outputstream);
-		
+		MFCreateSinkWriterFromURL(L"out.mp4", 0, attribs, &outputstream); //TODO: For now; we will just output to a simple file
+
+		IMFMediaType* mediaType;
+		MFCreateMediaType(&mediaType);
+		mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+		mediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+		mediaType->SetUINT32(MF_MT_AVG_BITRATE, 800000); //Bits per second
+		mediaType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+		MFSetAttributeSize(mediaType, MF_MT_FRAME_SIZE, 1920, 1080); //TODO: Dynamic based on screen size
+		MFSetAttributeRatio(mediaType, MF_MT_FRAME_RATE, 60, 1); //60 frames per second
+		MFSetAttributeRatio(mediaType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+		DWORD videoStream;
+		HRESULT streamStatus = outputstream->AddStream(mediaType, &videoStream);
+		mediaType->Release();
+		mediaType = 0;
+		MFCreateMediaType(&mediaType);
+		mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+		mediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32);
+		mediaType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+		MFSetAttributeSize(mediaType, MF_MT_FRAME_SIZE, 1920, 1080); //TODO: Dynamic based on screen size
+		MFSetAttributeRatio(mediaType, MF_MT_FRAME_RATE, 60, 1); //60 frames per second
+		MFSetAttributeRatio(mediaType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+		HRESULT inputStatus = outputstream->SetInputMediaType(videoStream, mediaType, 0);
+		mediaType->Release();
+		mediaType = 0;
+		HRESULT oval = outputstream->BeginWriting();
+		size_t framecount = 1000;
 		while (true) {
+			framecount--;
+			if (framecount == 0) {
+				break;
+			}
 			DXGI_OUTDUPL_FRAME_INFO frameinfo;
 			IDXGIResource* frame = 0;
 			HRESULT res = vmon->AcquireNextFrame(-1, &frameinfo, &frame);
@@ -187,23 +220,48 @@ extern "C" {
 			frame->QueryInterface(&surface);
 			DXGI_SURFACE_DESC surfdesc;
 			surface->GetDesc(&surfdesc);
+
+			ID3D11Texture2D* backbufferTexture = 0;
+			surface->QueryInterface(&backbufferTexture);
+			if (stagingTexture == 0) {
+				D3D11_TEXTURE2D_DESC desc;
+				backbufferTexture->GetDesc(&desc);
+				//Clone texture
+				//desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				desc.Usage = D3D11_USAGE_STAGING;
+				desc.MiscFlags = 0;
+				desc.BindFlags = 0;
+				desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ; //Allow CPU access to buffer from userspace
+				dev->CreateTexture2D(&desc, 0, &stagingTexture);
+				
+			}
+			ctx->CopyResource(stagingTexture, backbufferTexture);
+
+			vmon->ReleaseFrame();
+			backbufferTexture->Release();
 			IMFSample* sample = 0;
 			MFCreateSample(&sample);
-			IMFMediaBuffer* buffer = 0; //TODO: MF seems to support direct-GPU scenarios; see if we can use these somehow?
-			BYTE* cpumem;
-			DXGI_MAPPED_RECT gpumem;
-			memset(&gpumem, 0, sizeof(gpumem));
-
-			ID3D11Texture2D* mtex = 0;
-			surface->QueryInterface(&mtex);
-			MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), surface, 0, TRUE, &buffer);
-			DWORD status = sample->AddBuffer(buffer);
-			outputstream->WriteSample(0, sample);
-			buffer->Release();
+			
+			//Copy from GPU to CPU memory
+			IMFMediaBuffer* cpubuffer = 0;
+			D3D11_MAPPED_SUBRESOURCE gpumem;
+			ctx->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &gpumem);
+			
+			MFCreateMemoryBuffer(gpumem.DepthPitch, &cpubuffer);
+			BYTE* cpumem = 0;
+			cpubuffer->Lock(&cpumem, 0, 0);
+			memcpy(cpumem, gpumem.pData, gpumem.DepthPitch);
+			cpubuffer->Unlock();
+			cpubuffer->SetCurrentLength(gpumem.DepthPitch);
+			ctx->Unmap(stagingTexture, 0);
+			HRESULT status = sample->AddBuffer(cpubuffer);
+			cpubuffer->Release();
+			sample->SetSampleDuration(10 * 1000 * 1000 / 60); //1 frame
+			sample->SetSampleTime(0);
+			status = outputstream->WriteSample(0, sample);
 			sample->Release();
-			vmon->ReleaseFrame();
-			break; //TODO: Finish this
 		}
+		outputstream->Finalize();
 		//TODO: For each frame; encode with help from this sample: https://msdn.microsoft.com/en-us/library/windows/desktop/ff819477(v=vs.85).aspx
 
 		//dev->CreateRenderTargetView()
