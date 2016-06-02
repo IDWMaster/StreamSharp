@@ -26,7 +26,7 @@ public:
 		if (riid == IID_IMFByteStream || riid == IID_IUnknown) {
 			*ppvObject = (PVOID)this;
 			AddRef();
-			return NOERROR;
+			return S_OK;
 		}
 		return E_NOINTERFACE;
 	}
@@ -49,7 +49,7 @@ public:
 	}
 	HRESULT STDMETHODCALLTYPE GetCapabilities(
 		/* [out] */ __RPC__out DWORD *pdwCapabilities) {
-		*pdwCapabilities = MFBYTESTREAM_IS_READABLE | MFBYTESTREAM_IS_REMOTE;
+		*pdwCapabilities = MFBYTESTREAM_IS_WRITABLE;
 		return S_OK;
 	}
 
@@ -183,9 +183,9 @@ extern "C" {
 		IMFSinkWriter* outputstream;
 		IMFAttributes* attribs = 0;
 		MFCreateAttributes(&attribs, 1);
-		attribs->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4);
-		MFCreateSinkWriterFromURL(L"out.mp4", 0, attribs, &outputstream); //TODO: For now; we will just output to a simple file
-
+		attribs->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_FMPEG4);
+		HRESULT res = MFCreateSinkWriterFromURL(L"out.mp4", 0, attribs, &outputstream); //TODO: For now; we will just output to a simple file
+		
 		IMFMediaType* mediaType;
 		MFCreateMediaType(&mediaType);
 		mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
@@ -210,12 +210,9 @@ extern "C" {
 		mediaType->Release();
 		mediaType = 0;
 		HRESULT oval = outputstream->BeginWriting();
-		size_t framecount = 1000;
+		
 		while (true) {
-			framecount--;
-			if (framecount == 0) {
-				break;
-			}
+			
 			DXGI_OUTDUPL_FRAME_INFO frameinfo;
 			IDXGIResource* frame = 0;
 			HRESULT res = vmon->AcquireNextFrame(-1, &frameinfo, &frame);
