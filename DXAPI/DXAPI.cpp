@@ -10,6 +10,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <d3d9.h>
+#include <codecapi.h>
 #pragma comment(lib, "mfreadwrite")
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
@@ -44,12 +45,19 @@ public:
 		}
 		return refcount;
 	}
-	ByteStream() {
+	void(*bw)(const void* bytes, ULONG count, void* callback, void* state);
+	void(*ew)(void*, ULONG*);
+	bool read;
+	ByteStream(void(*BeginWrite)(const void* bytes, ULONG count, void* callback, void* state), void(*EndWrite)(void*, ULONG*), bool read = false) {
+		bw = BeginWrite;
+		ew = EndWrite;
+		this->read = read;
 		refcount = 1;
 	}
 	HRESULT STDMETHODCALLTYPE GetCapabilities(
 		/* [out] */ __RPC__out DWORD *pdwCapabilities) {
-		*pdwCapabilities = MFBYTESTREAM_IS_WRITABLE;
+		
+		*pdwCapabilities = (bw == 0 ? 0 : MFBYTESTREAM_IS_WRITABLE) | (read ? MFBYTESTREAM_IS_READABLE : 0);
 		return S_OK;
 	}
 
@@ -114,14 +122,17 @@ public:
 		/* [in] */ ULONG cb,
 		/* [in] */ IMFAsyncCallback *pCallback,
 		/* [in] */ IUnknown *punkState) {
-		return E_NOTIMPL;
+		bw(pb, cb, pCallback, punkState); //What a punk
+		
+		return S_OK;
 	}
 
 	virtual /* [local] */ HRESULT STDMETHODCALLTYPE EndWrite(
 		/* [in] */ IMFAsyncResult *pResult,
 		/* [annotation][out] */
 		_Out_  ULONG *pcbWritten) {
-		return E_NOTIMPL;
+		ew(pResult, pcbWritten);
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE Seek(
@@ -145,7 +156,30 @@ public:
 
 
 extern "C" {
-	__declspec(dllexport) bool InitCapture_Screen() {
+	__declspec(dllexport) void PlaybackStream() {
+		MFStartup(MF_VERSION);
+		IMFMediaSession* session = 0;
+		MFCreateMediaSession(0, &session);
+		ByteStream* bs = new ByteStream(0, 0, true);
+		IMFSourceResolver* resolver = 0;
+		MFCreateSourceResolver(&resolver);
+		MF_OBJECT_TYPE type;
+		IUnknown* idunno = 0;
+		//Retrieve media source object from bytestream
+		resolver->CreateObjectFromByteStream(bs, 0, MF_RESOLUTION_MEDIASOURCE, 0, &type, &idunno);
+		IMFMediaSource* mediaSource = 0;
+		idunno->QueryInterface(&mediaSource);
+
+		bs->Release();
+		session->Release();
+	}
+	
+	__declspec(dllexport) void CompleteIO(IMFAsyncCallback* cb, IUnknown* brute) {
+		IMFAsyncResult* res = 0;
+		MFCreateAsyncResult(0, cb, brute, &res);
+		cb->Invoke(res);
+	}
+	__declspec(dllexport) bool InitCapture_Screen(void(*streamcb)(void*),void(*BeginWrite)(const void* bytes,ULONG count,void* callback, void* state),void(*EndWrite)(void*,ULONG*)) {
 		MFStartup(MF_VERSION);
 		ID3D11Device* dev;
 		D3D_FEATURE_LEVEL featureLevel;
@@ -179,12 +213,13 @@ extern "C" {
 
 		
 		//TODO: Create byte stream
-		ByteStream* bs = new ByteStream();
+		ByteStream* bs = new ByteStream(BeginWrite,EndWrite);
+		streamcb(bs);
 		IMFSinkWriter* outputstream;
 		IMFAttributes* attribs = 0;
 		MFCreateAttributes(&attribs, 1);
 		attribs->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_FMPEG4);
-		HRESULT res = MFCreateSinkWriterFromURL(L"out.mp4", 0, attribs, &outputstream); //TODO: For now; we will just output to a simple file
+		HRESULT res = MFCreateSinkWriterFromURL(0, bs, attribs, &outputstream); //TODO: For now; we will just output to a simple file
 		
 		IMFMediaType* mediaType;
 		MFCreateMediaType(&mediaType);
