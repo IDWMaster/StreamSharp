@@ -29,13 +29,13 @@ namespace VideoStreamSample
 
             
             InitializeComponent();
-            /*
+            
             host.Child = new System.Windows.Forms.Control();
 
             grid.Children.Add(host);
             var hwnd = host.Child.Handle;
             Video vid = new Video(null);
-            vid.Play(hwnd);*/
+            vid.Play(hwnd);
         }
 
      

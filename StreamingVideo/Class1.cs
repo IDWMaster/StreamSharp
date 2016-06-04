@@ -18,16 +18,33 @@ namespace StreamingVideo
     }
     public class Video
     {
+        public delegate void BeginRead_Callback(IntPtr bytes, uint count, IntPtr callback, IntPtr state);
+        public delegate void EndRead_Callback(IntPtr callback, IntPtr bytesWritten);
         Stream str;
         public Video(Stream str)
         {
             this.str = str;
         }
         [DllImport("../../../x64/Debug/DXAPI.dll")]
-        static extern void PlaybackStream();
+        static extern void PlaybackStream(BeginRead_Callback br, EndRead_Callback er);
         public void Play(IntPtr hwnd)
         {
-            PlaybackStream();
+            uint bytesRead = 0;
+            BeginRead_Callback br = async (_bytes, count, callback, state) => {
+                byte[] tempBuffer = new byte[count];
+                bytesRead = (uint)await str.ReadAsync(tempBuffer, 0, tempBuffer.Length);
+                Marshal.Copy(tempBuffer, 0, _bytes, (int)bytesRead);
+                DisplaySource.CompleteIO(callback, state);
+            };
+            EndRead_Callback er = (callback, _bytesRead)=> {
+                unsafe
+                {
+                    uint* processed = (uint*)_bytesRead;
+                    *processed = bytesRead;
+                }
+            };
+            
+            PlaybackStream(br,er);
         }
     }
 	public class DisplaySource : VideoSource
@@ -39,7 +56,7 @@ namespace StreamingVideo
         [DllImport("../../../x64/Debug/DXAPI.dll")]
         static extern bool InitCapture_Screen(StreamCB cb,BeginWrite_Callback BeginWrite, EndWrite_Callback EndWrite);
         [DllImport("../../../x64/Debug/DXAPI.dll")]
-        static extern void CompleteIO(IntPtr callback, IntPtr state);
+       internal static extern void CompleteIO(IntPtr callback, IntPtr state);
         public DisplaySource()
 		{
 		}

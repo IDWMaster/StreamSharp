@@ -11,8 +11,11 @@ namespace testapp
     {
         static void Main(string[] args)
         {
-            DisplaySource src = new DisplaySource();
-            src.Record(File.Open("stream.mp4", FileMode.Create, FileAccess.Write, FileShare.ReadWrite));
+            
+            Video vid = new Video(File.Open("stream.mp4",FileMode.Open));
+            vid.Play(IntPtr.Zero);
+          //  DisplaySource src = new DisplaySource();
+           // src.Record(File.Open("stream.mp4", FileMode.Create, FileAccess.Write, FileShare.ReadWrite));
         }
     }
 }

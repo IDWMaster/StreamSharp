@@ -47,23 +47,28 @@ public:
 	}
 	void(*bw)(const void* bytes, ULONG count, void* callback, void* state);
 	void(*ew)(void*, ULONG*);
-	bool read;
-	ByteStream(void(*BeginWrite)(const void* bytes, ULONG count, void* callback, void* state), void(*EndWrite)(void*, ULONG*), bool read = false) {
+	void(*br)(void* bytes, ULONG count, void* callback, void* state);
+	void(*er)(void* callback, ULONG* outCb);
+	QWORD position;
+	ByteStream(void(*BeginWrite)(const void* bytes, ULONG count, void* callback, void* state), void(*EndWrite)(void*, ULONG*), void(*br)(void* bytes, ULONG count, void* callback, void* state) = 0, void(*er)(void* callback, ULONG* outCb) = 0) {
 		bw = BeginWrite;
 		ew = EndWrite;
-		this->read = read;
+		this->br = br;
+		this->er = er;
 		refcount = 1;
+		position = 0;
 	}
 	HRESULT STDMETHODCALLTYPE GetCapabilities(
 		/* [out] */ __RPC__out DWORD *pdwCapabilities) {
 		
-		*pdwCapabilities = (bw == 0 ? 0 : MFBYTESTREAM_IS_WRITABLE) | (read ? MFBYTESTREAM_IS_READABLE : 0);
+		*pdwCapabilities = (bw == 0 ? 0 : MFBYTESTREAM_IS_WRITABLE) | (br ? (MFBYTESTREAM_IS_READABLE | MFBYTESTREAM_IS_SEEKABLE) : 0);
 		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE GetLength(
 		/* [out] */ __RPC__out QWORD *pqwLength) {
-		return E_NOTIMPL;
+		*pqwLength = (QWORD)-1;
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE SetLength(
@@ -73,17 +78,22 @@ public:
 
 	virtual HRESULT STDMETHODCALLTYPE GetCurrentPosition(
 		/* [out] */ __RPC__out QWORD *pqwPosition) {
-		return E_NOTIMPL;
+		*pqwPosition = position;
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE SetCurrentPosition(
 		/* [in] */ QWORD qwPosition) {
-		return E_NOTIMPL;
+		if (qwPosition == position) {
+			return S_OK;
+		}
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE IsEndOfStream(
 		/* [out] */ __RPC__out BOOL *pfEndOfStream) {
-		return E_NOTIMPL;
+		*pfEndOfStream = 0;
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE Read(
@@ -99,14 +109,18 @@ public:
 		/* [in] */ ULONG cb,
 		/* [in] */ IMFAsyncCallback *pCallback,
 		/* [in] */ IUnknown *punkState) {
-		return E_NOTIMPL;
+		punkState->AddRef();
+		br(pb, cb, pCallback, punkState);
+		return S_OK;
 	}
 
 	virtual /* [local] */ HRESULT STDMETHODCALLTYPE EndRead(
 		/* [in] */ IMFAsyncResult *pResult,
 		/* [annotation][out] */
 		_Out_  ULONG *pcbRead) {
-		return E_NOTIMPL;
+		er(pResult, pcbRead);
+		position += *pcbRead;
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE Write(
@@ -122,6 +136,7 @@ public:
 		/* [in] */ ULONG cb,
 		/* [in] */ IMFAsyncCallback *pCallback,
 		/* [in] */ IUnknown *punkState) {
+		punkState->AddRef();
 		bw(pb, cb, pCallback, punkState); //What a punk
 		
 		return S_OK;
@@ -140,7 +155,8 @@ public:
 		/* [in] */ LONGLONG llSeekOffset,
 		/* [in] */ DWORD dwSeekFlags,
 		/* [out] */ __RPC__out QWORD *pqwCurrentPosition) {
-		return E_NOTIMPL;
+		*pqwCurrentPosition = 0;
+		return S_OK;
 	}
 
 	virtual HRESULT STDMETHODCALLTYPE Flush(void) {
@@ -156,17 +172,17 @@ public:
 
 
 extern "C" {
-	__declspec(dllexport) void PlaybackStream() {
+	__declspec(dllexport) void PlaybackStream(void(*br)(void* bytes, ULONG count, void* callback, void* state), void(*er)(void* callback, ULONG* outCb)) {
 		MFStartup(MF_VERSION);
 		IMFMediaSession* session = 0;
 		MFCreateMediaSession(0, &session);
-		ByteStream* bs = new ByteStream(0, 0, true);
+		ByteStream* bs = new ByteStream(0, 0, br,er);
 		IMFSourceResolver* resolver = 0;
 		MFCreateSourceResolver(&resolver);
 		MF_OBJECT_TYPE type;
 		IUnknown* idunno = 0;
 		//Retrieve media source object from bytestream
-		resolver->CreateObjectFromByteStream(bs, 0, MF_RESOLUTION_MEDIASOURCE, 0, &type, &idunno);
+		HRESULT res = resolver->CreateObjectFromByteStream(bs, 0, MF_RESOLUTION_MEDIASOURCE, 0, &type, &idunno);
 		IMFMediaSource* mediaSource = 0;
 		idunno->QueryInterface(&mediaSource);
 
@@ -176,7 +192,9 @@ extern "C" {
 	
 	__declspec(dllexport) void CompleteIO(IMFAsyncCallback* cb, IUnknown* brute) {
 		IMFAsyncResult* res = 0;
+		
 		MFCreateAsyncResult(0, cb, brute, &res);
+		brute->Release(); //Release your inner brute
 		cb->Invoke(res);
 	}
 	__declspec(dllexport) bool InitCapture_Screen(void(*streamcb)(void*),void(*BeginWrite)(const void* bytes,ULONG count,void* callback, void* state),void(*EndWrite)(void*,ULONG*)) {
