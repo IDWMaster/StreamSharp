@@ -145,7 +145,9 @@ public:
 		/* [in] */ ULONG cb,
 		/* [in] */ IMFAsyncCallback *pCallback,
 		/* [in] */ IUnknown *punkState) {
-		punkState->AddRef();
+		if (punkState) {
+			punkState->AddRef();
+		}
 		bw(pb, cb, pCallback, punkState); //What a punk
 		
 		return S_OK;
@@ -204,7 +206,9 @@ extern "C" {
 		IMFAsyncResult* res = 0;
 		
 		MFCreateAsyncResult(0, cb, brute, &res);
-		brute->Release(); //Release your inner brute
+		if (brute) {
+			brute->Release(); //Release your inner brute (note: Programmers don't have these....)
+		}
 		cb->Invoke(res);
 	}
 	__declspec(dllexport) bool InitCapture_Screen(void(*streamcb)(void*),void(*BeginWrite)(const void* bytes,ULONG count,void* callback, void* state),void(*EndWrite)(void*,ULONG*)) {
