@@ -11,6 +11,8 @@
 #include <mfreadwrite.h>
 #include <d3d9.h>
 #include <codecapi.h>
+#include <wmcodecdsp.h>
+#include <stdio.h>
 #pragma comment(lib, "mfreadwrite")
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
@@ -27,6 +29,13 @@ public:
 		if (riid == IID_IMFByteStream || riid == IID_IUnknown) {
 			*ppvObject = (PVOID)this;
 			AddRef();
+			return S_OK;
+		}
+		if (riid == IID_IMFAttributes) {
+			IMFAttributes* attribs;
+			MFCreateAttributes(&attribs, 1);
+			attribs->SetString(MF_BYTESTREAM_CONTENT_TYPE, L"video/mp4");
+			*ppvObject = attribs; //Pay-per-view object
 			return S_OK;
 		}
 		return E_NOINTERFACE;
@@ -61,7 +70,7 @@ public:
 	HRESULT STDMETHODCALLTYPE GetCapabilities(
 		/* [out] */ __RPC__out DWORD *pdwCapabilities) {
 		
-		*pdwCapabilities = (bw == 0 ? 0 : MFBYTESTREAM_IS_WRITABLE) | (br ? (MFBYTESTREAM_IS_READABLE | MFBYTESTREAM_IS_SEEKABLE) : 0);
+		*pdwCapabilities = (bw == 0 ? 0 : MFBYTESTREAM_IS_WRITABLE) | (br ? (MFBYTESTREAM_IS_READABLE) : 0);
 		return S_OK;
 	}
 
@@ -174,20 +183,21 @@ public:
 extern "C" {
 	__declspec(dllexport) void PlaybackStream(void(*br)(void* bytes, ULONG count, void* callback, void* state), void(*er)(void* callback, ULONG* outCb)) {
 		MFStartup(MF_VERSION);
-		IMFMediaSession* session = 0;
-		MFCreateMediaSession(0, &session);
-		ByteStream* bs = new ByteStream(0, 0, br,er);
-		IMFSourceResolver* resolver = 0;
-		MFCreateSourceResolver(&resolver);
-		MF_OBJECT_TYPE type;
-		IUnknown* idunno = 0;
-		//Retrieve media source object from bytestream
-		HRESULT res = resolver->CreateObjectFromByteStream(bs, 0, MF_RESOLUTION_MEDIASOURCE, 0, &type, &idunno);
-		IMFMediaSource* mediaSource = 0;
-		idunno->QueryInterface(&mediaSource);
-
-		bs->Release();
-		session->Release();
+		MFT_REGISTER_TYPE_INFO formatInfo;
+		formatInfo.guidMajorType = MFMediaType_Video;
+		formatInfo.guidSubtype = MFVideoFormat_H264;
+		
+		IMFActivate** activation = 0;
+		UINT32 found;
+		HRESULT res = MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, MFT_ENUM_FLAG_HARDWARE, &formatInfo, 0, &activation, &found);
+		if (activation) {
+			CoTaskMemFree(activation);
+		}
+		else {
+			printf("WARNING: No hardware video decoders found. Fallback to software....");
+			res = MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, MFT_ENUM_FLAG_ALL, &formatInfo, 0, &activation, &found);
+			CoTaskMemFree(activation);
+	    }
 	}
 	
 	__declspec(dllexport) void CompleteIO(IMFAsyncCallback* cb, IUnknown* brute) {
@@ -295,20 +305,9 @@ extern "C" {
 			IMFSample* sample = 0;
 			MFCreateSample(&sample);
 			
-			//Copy from GPU to CPU memory
 			HRESULT status = 0;
 			IMFMediaBuffer* cpubuffer = 0;
-			/*D3D11_MAPPED_SUBRESOURCE gpumem;
-			ctx->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &gpumem);
 			
-			MFCreateMemoryBuffer(gpumem.DepthPitch, &cpubuffer);
-			BYTE* cpumem = 0;
-			cpubuffer->Lock(&cpumem, 0, 0);
-			memcpy(cpumem, gpumem.pData, gpumem.DepthPitch);
-			cpubuffer->Unlock();
-			cpubuffer->SetCurrentLength(gpumem.DepthPitch);
-			ctx->Unmap(stagingTexture, 0);
-			*/
 			//GPU direct
 			MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), stagingTexture, 0, false, &cpubuffer);
 			IMF2DBuffer* im2d = 0;
